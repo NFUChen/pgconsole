@@ -48,7 +48,7 @@ RUN node scripts/gen-runtime-package.mjs > runtime-package.json \
 # Layers ordered least → most frequently changing for cache efficiency
 FROM alpine:3.21
 
-RUN apk add --no-cache libstdc++
+RUN apk add --no-cache libstdc++ git
 
 COPY --from=node:22-alpine /usr/local/bin/node /usr/local/bin/node
 
