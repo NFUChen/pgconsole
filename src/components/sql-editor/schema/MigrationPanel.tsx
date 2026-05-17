@@ -43,6 +43,42 @@ function DiffItem({ diff }: { diff: SchemaDiff }) {
   )
 }
 
+type PanelState =
+  | { kind: 'idle' }
+  | { kind: 'planning' }
+  | { kind: 'plan-error'; error: string }
+  | { kind: 'up-to-date'; plan: { branch: string; commitHash: string } }
+  | { kind: 'has-diffs'; plan: { branch: string; commitHash: string; summary: string; canRunInTransaction: boolean }; diffs: SchemaDiff[] }
+  | { kind: 'applying' }
+  | { kind: 'apply-error'; error: string }
+  | { kind: 'apply-success' }
+
+function derivePanelState(
+  planMutation: ReturnType<typeof usePlanMigration>,
+  applyMutation: ReturnType<typeof useApplyMigration>,
+): PanelState {
+  if (applyMutation.isPending) return { kind: 'applying' }
+  if (applyMutation.isError) return { kind: 'apply-error', error: applyMutation.error.message }
+  if (applyMutation.isSuccess) return { kind: 'apply-success' }
+  if (planMutation.isPending) return { kind: 'planning' }
+  if (planMutation.isError) return { kind: 'plan-error', error: planMutation.error.message }
+  if (planMutation.data) {
+    const plan = planMutation.data
+    if (plan.diffs.length === 0) return { kind: 'up-to-date', plan }
+    return { kind: 'has-diffs', plan, diffs: plan.diffs }
+  }
+  return { kind: 'idle' }
+}
+
+function StatusMessage({ icon, text, className }: { icon: React.ReactNode; text: string; className: string }) {
+  return (
+    <div className={`flex items-center gap-2 text-sm ${className}`}>
+      {icon}
+      <span>{text}</span>
+    </div>
+  )
+}
+
 export function MigrationPanel({ connectionId }: MigrationPanelProps) {
   const { hasDdl } = useConnectionPermissions(connectionId)
   const queryClient = useQueryClient()
@@ -51,7 +87,10 @@ export function MigrationPanel({ connectionId }: MigrationPanelProps) {
   const [showSql, setShowSql] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
 
+  const state = derivePanelState(planMutation, applyMutation)
+
   const handlePlan = () => {
+    applyMutation.reset()
     planMutation.mutate(connectionId)
   }
 
@@ -69,182 +108,160 @@ export function MigrationPanel({ connectionId }: MigrationPanelProps) {
     )
   }
 
-  if (applyMutation.isPending) {
-    return (
-      <div className="p-4 flex items-center gap-2 text-sm text-gray-500">
-        <Spinner className="size-4" />
-        <span>Applying migration...</span>
-      </div>
-    )
-  }
-
-  if (applyMutation.isError) {
-    return (
-      <div className="p-4 space-y-3">
-        <div className="flex items-center gap-2 text-sm text-red-600">
-          <AlertTriangle className="size-4" />
-          <span>Migration failed</span>
+  switch (state.kind) {
+    case 'idle':
+      return (
+        <div className="p-4 space-y-3">
+          <StatusMessage icon={<GitBranch className="size-4" />} text="Compare current database schema with git source" className="text-gray-600" />
+          <Button onClick={handlePlan} size="sm">
+            <RefreshCw className="size-3.5 mr-1.5" />
+            Compare with Git
+          </Button>
         </div>
-        <p className="text-xs text-red-500">{applyMutation.error.message}</p>
-        <Button onClick={handlePlan} size="sm" variant="outline">
-          <RefreshCw className="size-3.5 mr-1.5" />
-          Re-plan
-        </Button>
-      </div>
-    )
-  }
+      )
 
-  if (applyMutation.isSuccess) {
-    return (
-      <div className="p-4 space-y-3">
-        <div className="flex items-center gap-2 text-sm text-green-600">
-          <CircleCheck className="size-4" />
-          <span>Migration applied successfully</span>
+    case 'planning':
+      return (
+        <div className="p-4 flex items-center gap-2 text-sm text-gray-500">
+          <Spinner className="size-4" />
+          <span>Analyzing schema differences...</span>
         </div>
-        <Button onClick={handlePlan} size="sm" variant="outline">
-          <RefreshCw className="size-3.5 mr-1.5" />
-          Compare again
-        </Button>
-      </div>
-    )
-  }
+      )
 
-  if (!planMutation.data && !planMutation.isPending && !planMutation.isError) {
-    return (
-      <div className="p-4 space-y-3">
-        <div className="flex items-center gap-2 text-sm text-gray-600">
-          <GitBranch className="size-4" />
-          <span>Compare current database schema with git source</span>
+    case 'plan-error':
+      return (
+        <div className="p-4 space-y-3">
+          <StatusMessage icon={<AlertTriangle className="size-4" />} text="Failed to generate plan" className="text-red-600" />
+          <p className="text-xs text-red-500">{state.error}</p>
+          <Button onClick={handlePlan} size="sm" variant="outline">
+            <RefreshCw className="size-3.5 mr-1.5" />
+            Retry
+          </Button>
         </div>
-        <Button onClick={handlePlan} size="sm">
-          <RefreshCw className="size-3.5 mr-1.5" />
-          Compare with Git
-        </Button>
-      </div>
-    )
-  }
+      )
 
-  if (planMutation.isPending) {
-    return (
-      <div className="p-4 flex items-center gap-2 text-sm text-gray-500">
-        <Spinner className="size-4" />
-        <span>Analyzing schema differences...</span>
-      </div>
-    )
-  }
-
-  if (planMutation.isError) {
-    return (
-      <div className="p-4 space-y-3">
-        <div className="flex items-center gap-2 text-sm text-red-600">
-          <AlertTriangle className="size-4" />
-          <span>Failed to generate plan</span>
+    case 'up-to-date':
+      return (
+        <div className="p-4 space-y-3">
+          <StatusMessage icon={<CircleCheck className="size-4" />} text="Schema is up to date with git" className="text-green-600" />
+          <p className="text-xs text-gray-500">
+            Branch: {state.plan.branch} &middot; Commit: {state.plan.commitHash.slice(0, 7)}
+          </p>
+          <Button onClick={handlePlan} size="sm" variant="outline">
+            <RefreshCw className="size-3.5 mr-1.5" />
+            Refresh
+          </Button>
         </div>
-        <p className="text-xs text-red-500">{planMutation.error.message}</p>
-        <Button onClick={handlePlan} size="sm" variant="outline">
-          <RefreshCw className="size-3.5 mr-1.5" />
-          Retry
-        </Button>
-      </div>
-    )
-  }
+      )
 
-  const plan = planMutation.data!
-  const diffs = plan.diffs as SchemaDiff[]
-
-  if (diffs.length === 0) {
-    return (
-      <div className="p-4 space-y-3">
-        <div className="flex items-center gap-2 text-sm text-green-600">
-          <CircleCheck className="size-4" />
-          <span>Schema is up to date with git</span>
+    case 'applying':
+      return (
+        <div className="p-4 flex items-center gap-2 text-sm text-gray-500">
+          <Spinner className="size-4" />
+          <span>Applying migration...</span>
         </div>
-        <p className="text-xs text-gray-500">
-          Branch: {plan.branch} &middot; Commit: {plan.commitHash.slice(0, 7)}
-        </p>
-        <Button onClick={handlePlan} size="sm" variant="outline">
-          <RefreshCw className="size-3.5 mr-1.5" />
-          Refresh
-        </Button>
-      </div>
-    )
-  }
+      )
 
-  return (
-    <div className="flex flex-col h-full">
-      <div className="px-3 py-2 border-b border-gray-200 space-y-1">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">{plan.summary}</span>
-          <div className="flex gap-1">
-            <Button onClick={handlePlan} size="icon-sm" variant="ghost">
-              <RefreshCw className="size-3.5" />
-            </Button>
-            {hasDdl && (
-              <Button size="sm" onClick={() => setConfirmOpen(true)}>
-                <Play className="size-3.5 mr-1" />
-                Apply
-              </Button>
+    case 'apply-error':
+      return (
+        <div className="p-4 space-y-3">
+          <StatusMessage icon={<AlertTriangle className="size-4" />} text="Migration failed" className="text-red-600" />
+          <p className="text-xs text-red-500">{state.error}</p>
+          <Button onClick={handlePlan} size="sm" variant="outline">
+            <RefreshCw className="size-3.5 mr-1.5" />
+            Re-plan
+          </Button>
+        </div>
+      )
+
+    case 'apply-success':
+      return (
+        <div className="p-4 space-y-3">
+          <StatusMessage icon={<CircleCheck className="size-4" />} text="Migration applied successfully" className="text-green-600" />
+          <Button onClick={handlePlan} size="sm" variant="outline">
+            <RefreshCw className="size-3.5 mr-1.5" />
+            Compare again
+          </Button>
+        </div>
+      )
+
+    case 'has-diffs':
+      return (
+        <div className="flex flex-col h-full">
+          <div className="px-3 py-2 border-b border-gray-200 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">{state.plan.summary}</span>
+              <div className="flex gap-1">
+                <Button onClick={handlePlan} size="icon-sm" variant="ghost">
+                  <RefreshCw className="size-3.5" />
+                </Button>
+                {hasDdl && (
+                  <Button size="sm" onClick={() => setConfirmOpen(true)}>
+                    <Play className="size-3.5 mr-1" />
+                    Apply
+                  </Button>
+                )}
+              </div>
+            </div>
+            <p className="text-xs text-gray-500">
+              Branch: {state.plan.branch} &middot; Commit: {state.plan.commitHash.slice(0, 7)}
+            </p>
+          </div>
+
+          <ScrollArea className="flex-1">
+            <div className="py-1">
+              {state.diffs.map((diff, i) => (
+                <DiffItem key={`${diff.path}-${i}`} diff={diff} />
+              ))}
+            </div>
+          </ScrollArea>
+
+          <div className="border-t border-gray-200">
+            <button
+              type="button"
+              onClick={() => setShowSql(!showSql)}
+              className="w-full px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 text-left"
+            >
+              {showSql ? 'Hide' : 'Show'} DDL ({state.diffs.length} statement{state.diffs.length > 1 ? 's' : ''})
+            </button>
+            {showSql && (
+              <div className="px-3 pb-3 max-h-48 overflow-auto">
+                <pre className="text-xs font-mono text-gray-700 whitespace-pre-wrap">
+                  {state.diffs.map(d => d.sql).join('\n\n')}
+                </pre>
+              </div>
             )}
           </div>
+
+          <AlertDialogPrimitive.Root open={confirmOpen} onOpenChange={setConfirmOpen}>
+            <AlertDialogPrimitive.Portal>
+              <AlertDialogPrimitive.Backdrop className="fixed inset-0 z-50 bg-black/32 backdrop-blur-sm" />
+              <AlertDialogPrimitive.Viewport className="fixed inset-0 z-50 grid place-items-center p-4">
+                <AlertDialogPrimitive.Popup className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-lg">
+                  <AlertDialogPrimitive.Title className="text-lg font-semibold">
+                    Apply Migration
+                  </AlertDialogPrimitive.Title>
+                  <AlertDialogPrimitive.Description className="mt-2 text-sm text-gray-500">
+                    This will execute {state.diffs.length} DDL statement{state.diffs.length > 1 ? 's' : ''} against the database.
+                    {!state.plan.canRunInTransaction && (
+                      <span className="block mt-2 text-amber-600 font-medium">
+                        Warning: Some operations cannot run in a transaction and will be applied individually.
+                      </span>
+                    )}
+                  </AlertDialogPrimitive.Description>
+                  <div className="mt-6 flex justify-end gap-2">
+                    <Button variant="outline" onClick={() => setConfirmOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button onClick={handleApply}>
+                      Apply Plan
+                    </Button>
+                  </div>
+                </AlertDialogPrimitive.Popup>
+              </AlertDialogPrimitive.Viewport>
+            </AlertDialogPrimitive.Portal>
+          </AlertDialogPrimitive.Root>
         </div>
-        <p className="text-xs text-gray-500">
-          Branch: {plan.branch} &middot; Commit: {plan.commitHash.slice(0, 7)}
-        </p>
-      </div>
-
-      <ScrollArea className="flex-1">
-        <div className="py-1">
-          {diffs.map((diff, i) => (
-            <DiffItem key={`${diff.path}-${i}`} diff={diff} />
-          ))}
-        </div>
-      </ScrollArea>
-
-      <div className="border-t border-gray-200">
-        <button
-          type="button"
-          onClick={() => setShowSql(!showSql)}
-          className="w-full px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 text-left"
-        >
-          {showSql ? 'Hide' : 'Show'} DDL ({diffs.length} statement{diffs.length > 1 ? 's' : ''})
-        </button>
-        {showSql && (
-          <div className="px-3 pb-3 max-h-48 overflow-auto">
-            <pre className="text-xs font-mono text-gray-700 whitespace-pre-wrap">
-              {diffs.map(d => d.sql).join('\n\n')}
-            </pre>
-          </div>
-        )}
-      </div>
-
-      <AlertDialogPrimitive.Root open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogPrimitive.Portal>
-          <AlertDialogPrimitive.Backdrop className="fixed inset-0 z-50 bg-black/32 backdrop-blur-sm" />
-          <AlertDialogPrimitive.Viewport className="fixed inset-0 z-50 grid place-items-center p-4">
-            <AlertDialogPrimitive.Popup className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-lg">
-              <AlertDialogPrimitive.Title className="text-lg font-semibold">
-                Apply Migration
-              </AlertDialogPrimitive.Title>
-              <AlertDialogPrimitive.Description className="mt-2 text-sm text-gray-500">
-                This will execute {diffs.length} DDL statement{diffs.length > 1 ? 's' : ''} against the database.
-                {!plan.canRunInTransaction && (
-                  <span className="block mt-2 text-amber-600 font-medium">
-                    Warning: Some operations cannot run in a transaction and will be applied individually.
-                  </span>
-                )}
-              </AlertDialogPrimitive.Description>
-              <div className="mt-6 flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setConfirmOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleApply}>
-                  Apply Plan
-                </Button>
-              </div>
-            </AlertDialogPrimitive.Popup>
-          </AlertDialogPrimitive.Viewport>
-        </AlertDialogPrimitive.Portal>
-      </AlertDialogPrimitive.Root>
-    </div>
-  )
+      )
+  }
 }
