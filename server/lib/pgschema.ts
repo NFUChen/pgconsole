@@ -16,25 +16,40 @@ export interface ParsedPlan {
   summary: string
 }
 
-export function parsePlanJson(json: {
-  source_fingerprint: { hash: string }
-  diffs: Array<{
-    sql: string
-    type: string
-    operation: string
-    path: string
-    can_run_in_transaction: boolean
+interface PgSchemaPlanJson {
+  schemas?: Record<string, {
+    source_fingerprint?: { hash: string }
+    groups?: Array<{
+      can_run_in_transaction?: boolean
+      steps: Array<{
+        sql: string
+        type: string
+        operation: string
+        path: string
+      }>
+    }>
   }>
-}): ParsedPlan {
-  const diffs: PlanDiff[] = json.diffs.map(d => ({
-    sql: d.sql,
-    type: d.type,
-    operation: d.operation,
-    path: d.path,
-    canRunInTransaction: d.can_run_in_transaction,
-  }))
+}
 
-  const canRunInTransaction = diffs.length === 0 || diffs.every(d => d.canRunInTransaction)
+export function parsePlanJson(json: PgSchemaPlanJson, schema: string): ParsedPlan {
+  const schemaData = json.schemas?.[schema]
+  const sourceFingerprint = schemaData?.source_fingerprint?.hash ?? ''
+
+  const diffs: PlanDiff[] = []
+  let canRunInTransaction = true
+  for (const group of schemaData?.groups ?? []) {
+    const groupTxn = group.can_run_in_transaction !== false
+    if (!groupTxn) canRunInTransaction = false
+    for (const step of group.steps) {
+      diffs.push({
+        sql: step.sql,
+        type: step.type,
+        operation: step.operation,
+        path: step.path,
+        canRunInTransaction: groupTxn,
+      })
+    }
+  }
 
   const counts = new Map<string, number>()
   for (const d of diffs) {
@@ -53,7 +68,7 @@ export function parsePlanJson(json: {
     summary = `${diffs.length} changes: ${parts.join(', ')}`
   }
 
-  return { sourceFingerprint: json.source_fingerprint.hash, diffs, canRunInTransaction, summary }
+  return { sourceFingerprint, diffs, canRunInTransaction, summary }
 }
 
 export function runPgSchemaPlan(

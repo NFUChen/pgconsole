@@ -67,12 +67,13 @@ export const migrationServiceHandlers: ServiceImpl<typeof MigrationService> = {
       )
     }
 
-    const parsed = parsePlanJson(planJson as Parameters<typeof parsePlanJson>[0])
+    const parsed = parsePlanJson(planJson as Parameters<typeof parsePlanJson>[0], pgSchema)
 
     const planId = storePlan({
       connectionId: req.connectionId,
       planJsonPath: outputJsonPath,
       planData: planJson,
+      schema: pgSchema,
     })
 
     return {
@@ -117,7 +118,7 @@ export const migrationServiceHandlers: ServiceImpl<typeof MigrationService> = {
       throw new ConnectError('Plan does not match connection', Code.InvalidArgument)
     }
 
-    const parsed = parsePlanJson(plan.planData as Parameters<typeof parsePlanJson>[0])
+    const parsed = parsePlanJson(plan.planData as Parameters<typeof parsePlanJson>[0], plan.schema)
     const totalSteps = parsed.diffs.length
 
     for (let i = 0; i < totalSteps; i++) {

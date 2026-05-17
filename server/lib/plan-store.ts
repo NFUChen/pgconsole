@@ -6,17 +6,19 @@ export interface StoredPlan {
   connectionId: string
   planJsonPath: string
   planData: unknown
+  schema: string
   createdAt: number
 }
 
 const plans = new Map<string, StoredPlan>()
 
-export function storePlan(opts: { connectionId: string; planJsonPath: string; planData: unknown }): string {
+export function storePlan(opts: { connectionId: string; planJsonPath: string; planData: unknown; schema: string }): string {
   const id = randomUUID()
   plans.set(id, {
     connectionId: opts.connectionId,
     planJsonPath: opts.planJsonPath,
     planData: opts.planData,
+    schema: opts.schema,
     createdAt: Date.now(),
   })
   return id

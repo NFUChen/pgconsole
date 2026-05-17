@@ -52,6 +52,8 @@ RUN apk add --no-cache libstdc++ git
 
 COPY --from=node:22-alpine /usr/local/bin/node /usr/local/bin/node
 
+RUN addgroup -S pgconsole && adduser -S pgconsole -G pgconsole
+
 WORKDIR /app
 
 # 1. Binaries & entrypoint — rarely change
@@ -79,5 +81,7 @@ LABEL org.opencontainers.image.revision=${GIT_COMMIT}
 ENV NODE_ENV=production
 ENV PORT=9876
 EXPOSE 9876
+
+USER pgconsole
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
