@@ -1,24 +1,25 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "helm-chart.fullname" . }}
+  name: {{ include "pgconsole.fullname" . }}
   labels:
-    {{- include "helm-chart.labels" . | nindent 4 }}
+    {{- include "pgconsole.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   selector:
     matchLabels:
-      {{- include "helm-chart.selectorLabels" . | nindent 6 }}
+      {{- include "pgconsole.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
       annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       labels:
-        {{- include "helm-chart.labels" . | nindent 8 }}
+        {{- include "pgconsole.labels" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -27,33 +28,46 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "helm-chart.serviceAccountName" . }}
+      serviceAccountName: {{ include "pgconsole.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
       securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
+          {{- with .Values.securityContext }}
           securityContext:
-            {{- toYaml .Values.securityContext | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
-              containerPort: {{ .Values.service.port }}
+              containerPort: 9876
               protocol: TCP
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:
             {{- toYaml .Values.readinessProbe | nindent 12 }}
+          {{- with .Values.resources }}
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
-          {{- with .Values.volumeMounts }}
-          volumeMounts:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-      {{- with .Values.volumes }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/pgconsole.toml
+              subPath: pgconsole.toml
+              readOnly: true
+            {{- with .Values.volumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
+        - name: config
+          configMap:
+            name: {{ include "pgconsole.fullname" . }}-config
+        {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
